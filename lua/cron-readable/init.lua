@@ -2,18 +2,26 @@ local M = {}
 
 local ns = vim.api.nvim_create_namespace("cron_readable")
 
--- match 5-field cron
-local CRON_PATTERN = "(%S+%s+%S+%s+%S+%s+%S+%s+%S+)"
+-- A cron field: starts with * or digit, OR is a 3-letter day/month name
+local CRON_PATTERN_6 = "([%*%?%d][%S]*%s+[%*%?%d][%S]*%s+[%*%?%d][%S]*%s+[%*%?%d%a][%S]*%s+[%*%?%d%a][%S]*%s+[%*%?%d%a][%S]*)"
+local CRON_PATTERN_5 = "([%*%?%d][%S]*%s+[%*%?%d][%S]*%s+[%*%?%d][%S]*%s+[%*%?%d%a][%S]*%s+[%*%?%d%a][%S]*)"
 
 local DAYS = {
-  ["0"] = "Sunday",
-  ["1"] = "Monday",
-  ["2"] = "Tuesday",
-  ["3"] = "Wednesday",
-  ["4"] = "Thursday",
-  ["5"] = "Friday",
-  ["6"] = "Saturday",
-  ["7"] = "Sunday",
+  ["0"]   = "Sunday",
+  ["1"]   = "Monday",
+  ["2"]   = "Tuesday",
+  ["3"]   = "Wednesday",
+  ["4"]   = "Thursday",
+  ["5"]   = "Friday",
+  ["6"]   = "Saturday",
+  ["7"]   = "Sunday",
+  ["SUN"] = "Sunday",
+  ["MON"] = "Monday",
+  ["TUE"] = "Tuesday",
+  ["WED"] = "Wednesday",
+  ["THU"] = "Thursday",
+  ["FRI"] = "Friday",
+  ["SAT"] = "Saturday",
 }
 
 local function field_desc(value, unit)
@@ -33,11 +41,26 @@ local function field_desc(value, unit)
   return nil
 end
 
+local function is_wildcard(v)
+  return v == "*" or v == "?"
+end
+
 local function humanize(cron)
-  local min, hour, dom, mon, dow =
-    cron:match("^(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)$")
+  local sec, min, hour, dom, mon, dow
+
+  -- Try 6-field cron first (with seconds)
+  sec, min, hour, dom, mon, dow =
+    cron:match("^(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)$")
+
+  -- Fall back to 5-field cron (without seconds)
+  if not sec then
+    min, hour, dom, mon, dow =
+      cron:match("^(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s+(%S+)$")
+  end
 
   if not min then return nil end
+
+  local h, m = tonumber(hour), tonumber(min)
 
   -- Every minute
   if min == "*" and hour == "*" then
@@ -54,21 +77,24 @@ local function humanize(cron)
     return "Every hour"
   end
 
-  -- Daily at time
-  if dom == "*" and mon == "*" and dow == "*" then
-    return string.format("Every day at %02d:%02d", tonumber(hour), tonumber(min))
+  -- Every N hours
+  local hour_step = hour:match("^%*/(%d+)$")
+  if min == "0" and hour_step then
+    return "Every " .. hour_step .. " hours"
   end
 
-  -- Weekly
-  if dow ~= "*" and dom == "*" then
-    local day = DAYS[dow]
-    if day then
-      return string.format(
-        "Every %s at %02d:%02d",
-        day,
-        tonumber(hour),
-        tonumber(min)
-      )
+  -- Weekly (dom can be * or ?)
+  if not is_wildcard(dow) and is_wildcard(dom) then
+    local day = DAYS[dow:upper()]
+    if day and h and m then
+      return string.format("Every %s at %02d:%02d", day, h, m)
+    end
+  end
+
+  -- Daily at time (dom, mon, dow can be * or ?)
+  if is_wildcard(dom) and is_wildcard(mon) and is_wildcard(dow) then
+    if h and m then
+      return string.format("Every day at %02d:%02d", h, m)
     end
   end
 
@@ -80,7 +106,8 @@ local function update(bufnr)
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   for i, line in ipairs(lines) do
-    local cron = line:match(CRON_PATTERN)
+    -- Try 6-field first, then 5-field
+    local cron = line:match(CRON_PATTERN_6) or line:match(CRON_PATTERN_5)
     if cron then
       local text = humanize(cron)
       if text then
