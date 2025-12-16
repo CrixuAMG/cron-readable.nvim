@@ -139,4 +139,14 @@ function M.setup(opts)
   )
 end
 
+-- Expose internals for testing
+M._internals = {
+  humanize       = humanize,
+  is_wildcard    = is_wildcard,
+  field_desc     = field_desc,
+  CRON_PATTERN_6 = CRON_PATTERN_6,
+  CRON_PATTERN_5 = CRON_PATTERN_5,
+  DAYS           = DAYS,
+}
+
 return M
